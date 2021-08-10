@@ -16,6 +16,8 @@ import functools
 from binascii import hexlify, unhexlify
 from collections import defaultdict
 from tqdm import tqdm
+import db
+
 
 # describe the fixed structure of block entity bytes for unpacking
 
@@ -800,11 +802,19 @@ def deserialize_mosaic_resolution_statements(stmt_data, i):
 
 
 def state_map_tx(tx,height,fee_multiplier,state_map):
+    xym_changes = [*state_map_tx_(tx,height,fee_multiplier,state_map)]
+    return xym_changes
+
+
+def state_map_tx_(tx,height,fee_multiplier,state_map):
     """take a transaction, height, fee multiplier, and update a given state map with resulting state changes"""
 
+    
     # TODO: handle flows for *all* mosaics, not just XYM
     address = public_key_to_address(unhexlify(tx['signer_public_key']))
-    
+
+    sender_amount = 0
+
     # transfer tx
     if tx['type'] == b'4154':
         if len(tx['payload']['message']) and tx['payload']['message'][0] == 0xfe:
@@ -813,7 +823,14 @@ def state_map_tx(tx,height,fee_multiplier,state_map):
             for mosaic in tx['payload']['mosaics']:
                 if hex(mosaic['mosaic_id']) in ['0x6bed913fa20223f8','0xe74b99ba41f4afee']: # only care about XYM for now, hardcoded alias
                     state_map[address]['xym_balance'][height] -= mosaic['amount']
+                    sender_amount = -mosaic['amount']
+                    recipient_address = tx['payload']['recipient_address']
                     state_map[tx['payload']['recipient_address']]['xym_balance'][height] += mosaic['amount']
+                    yield db.AccountStateChange(address=recipient_address,
+                                             xym_change=mosaic['amount'],
+                                             height=height,
+                                             type_=db.StateChangeType.TX_IN.value)
+
     
     # key link tx          
     elif tx['type'] in [b'4243',b'424c',b'414c']:
@@ -831,34 +848,63 @@ def state_map_tx(tx,height,fee_multiplier,state_map):
     # aggregate tx
     elif tx['type'] in [b'4141',b'4241']:
         for sub_tx in tx['payload']['embedded_transactions']:
-            state_map_tx(sub_tx,height,None,state_map)
+            yield from state_map_tx_(sub_tx,height,None,state_map)
     
     # handle fees
     if fee_multiplier is not None:
-        state_map[address]['xym_balance'][height] -= min(tx['max_fee'],tx['size']*fee_multiplier)
-    
-    
+        fee = min(tx['max_fee'],tx['size']*fee_multiplier)
+        state_map[address]['xym_balance'][height] -= fee
+        yield db.AccountStateChange(address=address,
+                                 xym_change=-sender_amount - fee,
+                                 fee=fee,
+                                 height=height,
+                                 type_=db.StateChangeType.TX_OUT.value)
+
+
 def state_map_rx(rx,height,state_map):
+    xym_changes = [*state_map_rx_(rx,height,state_map)]
+    return xym_changes
+
+
+def state_map_rx_(rx,height,state_map):
     """take a receipt and height, and update a given state map with resulting state changes"""
     
     # rental fee receipts
     if rx['type'] in [0x124D, 0x134E]: 
         if hex(rx['payload']['mosaic_id']) in ['0x6bed913fa20223f8','0xe74b99ba41f4afee']:
             state_map[rx['payload']['sender_address']]['xym_balance'][height] -= rx['payload']['amount']
+            yield db.AccountStateChange(address=rx['payload']['sender_address'],
+                            xym_change=-rx['payload']['amount'],
+                            height=height,
+                            type_=db.StateChangeType.RX_CREDIT.value)
+
             state_map[rx['payload']['recipient_address']]['xym_balance'][height] += rx['payload']['amount']
-            
+            yield db.AccountStateChange(address=rx['payload']['recipient_address'],
+                                xym_change=rx['payload']['amount'],
+                                height=height,
+                                type_=db.StateChangeType.RX_CREDIT.value)
+
+
     # balance change receipts (credit)
     elif rx['type'] in [0x2143,0x2248,0x2348,0x2252,0x2352]:
         state_map[rx['payload']['target_address']]['xym_balance'][height] += rx['payload']['amount']
+        yield db.AccountStateChange(address=rx['payload']['target_address'],
+                                 xym_change=rx['payload']['amount'],
+                                 height=height,
+                                 type_=db.StateChangeType.RX_CREDIT.value)
         
     # balance change receipts (debit)
     elif rx['type'] == [0x3148,0x3152]:
         state_map[rx['payload']['target_address']]['xym_balance'][height] -= rx['payload']['amount']
-    
+        yield db.AccountStateChange(address=rx['payload']['target_address'],
+                                 xym_change=-rx['payload']['amount'],
+                                 height=height,
+                                 type_=db.StateChangeType.RX_DEBIT.value)
+
     # aggregate receipts
     if rx['type'] == 0xE143:
         for sub_rx in rx['receipts']:
-            state_map_rx(sub_rx,height,state_map)
+            yield from state_map_rx_(sub_rx,height,state_map)
 
 
 def get_block_stats(block):
@@ -985,25 +1031,28 @@ if __name__ == "__main__":
         'node_key_link': defaultdict(lambda:[]),
         'account_key_link': defaultdict(lambda:[])
     })
-
+    db.db_init()
     statements_ = statements(statement_paths(block_dir=args.block_dir, statement_extension=args.statement_extension))
     blocks_ = tqdm(sorted(blocks, key=lambda b:b['header']['height']))
-    s_height, stmts, s_path = next(statements_)
-    for block in blocks_:
-        height = block['header']['height']
-        blocks_.set_description(f"processing block: {height}")
-        for tx in block['footer']['transactions']:
-            state_map_tx(tx,height,block['header']['fee_multiplier'],state_map)
+    with db.batch_saver() as saver:
+        s_height, stmts, s_path = next(statements_)
+        for block in blocks_:
+            height = block['header']['height']
+            blocks_.set_description(f"processing block: {height}")
+            for tx in block['footer']['transactions']:
+                changes = state_map_tx(tx,height,block['header']['fee_multiplier'],state_map)
+                saver(changes)
+                
+            if s_height > height:
+                continue
 
-        if s_height > height:
-            continue
+            while s_height < height:
+                s_height, stmts, s_path = next(statements_)
 
-        while s_height < height:
-            s_height, stmts, s_path = next(statements_)
-
-        for stmt in stmts['transaction_statements']:
-            for rx in stmt['receipts']:
-                state_map_rx(rx,height,state_map)
+            for stmt in stmts['transaction_statements']:
+                for rx in stmt['receipts']:
+                    changes = state_map_rx(rx,height,state_map)
+                    saver(changes)
 
     assert len([*statements_]) == 0
 
@@ -1021,14 +1070,13 @@ if __name__ == "__main__":
     header_df['dateTime'] = pd.to_datetime(header_df['timestamp'],origin=pd.to_datetime('2021-03-16 00:06:25'),unit='ms')
     header_df = header_df.set_index('dateTime').sort_index(axis=0)
     header_df.to_pickle(args.header_save_path)
-
+    
     print(f"header data written to {args.header_save_path}")
 
     # with open(args.statement_save_path, 'wb') as file:
     #     pickle.dump(statements,file)
 
     print(f"statement data written to {args.statement_save_path}")
-
 
     # TODO: fix state serialization; need to convert from defaultdict to regular dictionaries first
     # with open(args.state_save_path, 'wb') as file:
