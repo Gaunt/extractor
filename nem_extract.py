@@ -915,6 +915,7 @@ def get_block_stats(block):
     return data
 
 
+
 def statement_paths(statement_extension='.stmt', block_dir='./data'):    
     statement_paths = glob.glob(os.path.join(block_dir,'**','*'+statement_extension),recursive=True)
     statement_format_pattern = re.compile('[0-9]{5}'+statement_extension)
@@ -988,6 +989,17 @@ def build_state_map(blocks, statements):
     assert len([*statements_]) == 0
 
     return state_map
+
+
+def state_map_to_dict(state_map):
+    sm_dict = dict(state_map)
+    for k, v in sm_dict.items():
+        sm_dict[k] = dict(v)
+        for kk, vv in v.items():
+            sm_dict[k][kk] = dict(vv)
+    return sm_dict
+
+
 
 if __name__ == "__main__":
 
@@ -1091,10 +1103,11 @@ if __name__ == "__main__":
 
     print(f"statement data written to {args.statement_save_path}")
 
-    # TODO: fix state serialization; need to convert from defaultdict to regular dictionaries first
-    
-    # with open(args.state_save_path, 'wb') as file:
-    #     pickle.dump(state_map,file)
+
+    state_map_ = state_map_to_dict(state_map)
+
+    with open(args.state_save_path, 'wb') as file:
+        pickle.dump(state_map_,file)
 
     
     # print(f"state data written to {args.statement_save_path}")
