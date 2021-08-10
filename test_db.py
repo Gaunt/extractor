@@ -43,4 +43,3 @@ def test_save(cursor):
         )
     ]
     db.save_changes(changes)
-

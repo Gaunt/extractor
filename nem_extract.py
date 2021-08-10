@@ -822,7 +822,7 @@ def state_map_tx_(tx,height,fee_multiplier,state_map):
             for mosaic in tx['payload']['mosaics']:
                 if hex(mosaic['mosaic_id']) in ['0x6bed913fa20223f8','0xe74b99ba41f4afee']: # only care about XYM for now, hardcoded alias
                     state_map[address]['xym_balance'][height] -= mosaic['amount']
-                    sender_amount = -mosaic['amount']
+                    sender_amount -= mosaic['amount']
                     recipient_address = tx['payload']['recipient_address']
                     state_map[tx['payload']['recipient_address']]['xym_balance'][height] += mosaic['amount']
                     yield db.AccountStateChange(address=recipient_address,
@@ -854,7 +854,7 @@ def state_map_tx_(tx,height,fee_multiplier,state_map):
         fee = min(tx['max_fee'],tx['size']*fee_multiplier)
         state_map[address]['xym_balance'][height] -= fee
         yield db.AccountStateChange(address=address,
-                                 xym_change=-sender_amount - fee,
+                                 xym_change=sender_amount - fee,
                                  fee=fee,
                                  height=height,
                                  type_=db.StateChangeType.TX_OUT.value)
@@ -875,7 +875,7 @@ def state_map_rx_(rx,height,state_map):
             yield db.AccountStateChange(address=rx['payload']['sender_address'],
                             xym_change=-rx['payload']['amount'],
                             height=height,
-                            type_=db.StateChangeType.RX_CREDIT.value)
+                            type_=db.StateChangeType.RX_DEBIT.value)
 
             state_map[rx['payload']['recipient_address']]['xym_balance'][height] += rx['payload']['amount']
             yield db.AccountStateChange(address=rx['payload']['recipient_address'],
