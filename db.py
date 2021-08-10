@@ -87,3 +87,11 @@ def save_changes(changes: Iterable[AccountStateChange]):
         changes,
     )
     conn.commit()
+
+
+def get_balance_history(address):
+    conn = get_conn()
+    cursor = conn.cursor()
+    sql = """SELECT height, sum(xym_change) from account_state_changes where address='?' group by height order by height"""
+    cursor.execute(sql, address)
+    return cursor.fetchall()

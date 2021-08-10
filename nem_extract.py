@@ -809,7 +809,6 @@ def state_map_tx(tx,height,fee_multiplier,state_map):
 def state_map_tx_(tx,height,fee_multiplier,state_map):
     """take a transaction, height, fee multiplier, and update a given state map with resulting state changes"""
 
-    
     # TODO: handle flows for *all* mosaics, not just XYM
     address = public_key_to_address(unhexlify(tx['signer_public_key']))
 
@@ -953,6 +952,43 @@ def statements(statement_paths, db_offset_bytes=DB_OFFSET_BYTES):
             yield stmt_height, statements, path
 
 
+def get_balance_history(address, state_map):
+    return [*sorted(state_map[address]['xym_balance'].items())]
+
+
+def build_state_map(blocks, statements):
+    state_map = defaultdict(lambda:{
+        'xym_balance': defaultdict(lambda:0),
+        'delegation_requests': defaultdict(lambda:[]),
+        'vrf_key_link': defaultdict(lambda:[]),
+        'node_key_link': defaultdict(lambda:[]),
+        'account_key_link': defaultdict(lambda:[])
+    })
+
+    with db.batch_saver() as saver:
+        s_height, stmts, s_path = next(statements)
+        for block in blocks_:
+            height = block['header']['height']
+            blocks_.set_description(f"processing block: {height}")
+            for tx in block['footer']['transactions']:
+                changes = state_map_tx(tx,height,block['header']['fee_multiplier'],state_map)
+                saver(changes)
+                
+            if s_height > height:
+                continue
+
+            while s_height < height:
+                s_height, stmts, s_path = next(statements)
+
+            for stmt in stmts['transaction_statements']:
+                for rx in stmt['receipts']:
+                    changes = state_map_rx(rx,height,state_map)
+                    saver(changes)
+
+    assert len([*statements_]) == 0
+
+    return state_map
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -1024,37 +1060,14 @@ if __name__ == "__main__":
                 'subcache_merkle_roots':merkle_roots
             })
 
-    state_map = defaultdict(lambda:{
-        'xym_balance': defaultdict(lambda:0),
-        'delegation_requests': defaultdict(lambda:[]),
-        'vrf_key_link': defaultdict(lambda:[]),
-        'node_key_link': defaultdict(lambda:[]),
-        'account_key_link': defaultdict(lambda:[])
-    })
+    
+    db.db_clean()
     db.db_init()
+    
     statements_ = statements(statement_paths(block_dir=args.block_dir, statement_extension=args.statement_extension))
     blocks_ = tqdm(sorted(blocks, key=lambda b:b['header']['height']))
-    with db.batch_saver() as saver:
-        s_height, stmts, s_path = next(statements_)
-        for block in blocks_:
-            height = block['header']['height']
-            blocks_.set_description(f"processing block: {height}")
-            for tx in block['footer']['transactions']:
-                changes = state_map_tx(tx,height,block['header']['fee_multiplier'],state_map)
-                saver(changes)
-                
-            if s_height > height:
-                continue
 
-            while s_height < height:
-                s_height, stmts, s_path = next(statements_)
-
-            for stmt in stmts['transaction_statements']:
-                for rx in stmt['receipts']:
-                    changes = state_map_rx(rx,height,state_map)
-                    saver(changes)
-
-    assert len([*statements_]) == 0
+    state_map = build_state_map(blocks_, statements_)
 
     print("block data extraction complete!\n")
     print("statement data extraction complete!\n")
@@ -1079,9 +1092,11 @@ if __name__ == "__main__":
     print(f"statement data written to {args.statement_save_path}")
 
     # TODO: fix state serialization; need to convert from defaultdict to regular dictionaries first
+    
     # with open(args.state_save_path, 'wb') as file:
     #     pickle.dump(state_map,file)
 
+    
     # print(f"state data written to {args.statement_save_path}")
 
     print("exiting . . .")

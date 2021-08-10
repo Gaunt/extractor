@@ -1,5 +1,6 @@
 import os
 import pytest
+import nem_extract
 import db
 
 
@@ -42,3 +43,4 @@ def test_save(cursor):
         )
     ]
     db.save_changes(changes)
+
