@@ -44,7 +44,9 @@ HEADER_FORMAT = {
 HEADER_LEN = 372
 
 DB_OFFSET_BYTES = 800
-
+BLOCK_DIR = './data'
+BLOCK_EXTENSION = '.dat'
+STATEMENT_EXTENSION = '.stmt'
 FOOTER_FORMAT = {
     'reserved': 'I'}
 
@@ -916,7 +918,7 @@ def get_block_stats(block):
 
 
 
-def statement_paths(statement_extension='.stmt', block_dir='./data'):    
+def statement_paths(statement_extension=STATEMENT_EXTENSION, block_dir=BLOCK_DIR):    
     statement_paths = glob.glob(os.path.join(block_dir,'**','*'+statement_extension),recursive=True)
     statement_format_pattern = re.compile('[0-9]{5}'+statement_extension)
     statement_paths = sorted(list(filter(lambda x: statement_format_pattern.match(os.path.basename(x)),statement_paths)))
@@ -957,7 +959,10 @@ def get_balance_history(address, state_map):
     return [*sorted(state_map[address]['xym_balance'].items())]
 
 
-def build_state_map(blocks, statements):
+def build_state_map(blocks, statement_extension=STATEMENT_EXTENSION, block_dir=BLOCK_DIR):
+    statements_ = statements(statement_paths(block_dir=block_dir, statement_extension=statement_extension))
+    blocks_ = tqdm(sorted(blocks, key=lambda b:b['header']['height']))
+
     state_map = defaultdict(lambda:{
         'xym_balance': defaultdict(lambda:0),
         'delegation_requests': defaultdict(lambda:[]),
@@ -1004,13 +1009,13 @@ def state_map_to_dict(state_map):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--block_dir", type=str, default='./data', help="Location of block store")
+    parser.add_argument("--block_dir", type=str, default=BLOCK_DIR, help="Location of block store")
     parser.add_argument("--block_save_path", type=str, default='./block_data.pkl', help="path to write the extracted block data to")
     parser.add_argument("--statement_save_path", type=str, default='./stmt_data.pkl', help="path to write the extracted statement data to")
     parser.add_argument("--state_save_path", type=str, default='./state_map.pkl', help="path to write the extracted statement data to")
     parser.add_argument("--header_save_path", type=str, default='./block_header_df.pkl', help="path to write the extracted data to")
-    parser.add_argument("--block_extension", type=str, default='.dat', help="extension of block files; must be unique")
-    parser.add_argument("--statement_extension", type=str, default='.stmt', help="extension of block files; must be unique")
+    parser.add_argument("--block_extension", type=str, default=BLOCK_EXTENSION, help="extension of block files; must be unique")
+    parser.add_argument("--statement_extension", type=str, default=STATEMENT_EXTENSION, help="extension of block files; must be unique")
     parser.add_argument("--db_offset_bytes", type=int, default=DB_OFFSET_BYTES, help="padding bytes at start of storage files")
     parser.add_argument("--save_tx_hashes", action='store_true', help="flag to keep full tx hashes")
     parser.add_argument("--save_subcache_merkle_roots", action='store_true', help="flag to keep subcache merkle roots")
@@ -1076,10 +1081,7 @@ if __name__ == "__main__":
     db.db_clean()
     db.db_init()
     
-    statements_ = statements(statement_paths(block_dir=args.block_dir, statement_extension=args.statement_extension))
-    blocks_ = tqdm(sorted(blocks, key=lambda b:b['header']['height']))
-
-    state_map = build_state_map(blocks_, statements_)
+    state_map = build_state_map(blocks_, block_dir=args.block_dir, statement_extension=args.statement_extension)
 
     print("block data extraction complete!\n")
     print("statement data extraction complete!\n")

@@ -2,6 +2,7 @@ import sqlite3
 from enum import Enum
 from textwrap import dedent
 from typing import NamedTuple, Optional, Iterable
+import pickle
 import contextlib
 import os
 
@@ -73,6 +74,7 @@ def batch_saver():
         if len(batch) > BATCH_SIZE:
             save_changes(batch)
             batch = []
+
     try:
         yield saver
     finally:
@@ -89,7 +91,13 @@ def save_changes(changes: Iterable[AccountStateChange]):
     conn.commit()
 
 
-def get_balance_history(address):
+def pickle_balance_history(address):
+    with open("state_map.pkl") as f:
+        state_map = pickle.load(f)
+        return state_map['xym_balance'].items()
+
+
+def db_balance_history(address):
     conn = get_conn()
     cursor = conn.cursor()
     sql = """SELECT height, sum(xym_change) from account_state_changes where address='?' group by height order by height"""
