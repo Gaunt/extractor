@@ -919,43 +919,8 @@ def state_map_to_dict(state_map):
     return sm_dict
 
 
-def parse_args(argv):
-    parser = argparse.ArgumentParser(argv)
-    parser.add_argument("--block_dir", type=str, default='./data', help="Location of block store")
-    parser.add_argument("--block_save_path", type=str, default='./block_data.pkl', help="path to write the extracted block data to")
-    parser.add_argument("--statement_save_path", type=str, default='./stmt_data.pkl', help="path to write the extracted statement data to")
-    parser.add_argument("--state_save_path", type=str, default='./state_map.pkl', help="path to write the extracted statement data to")
-    parser.add_argument("--header_save_path", type=str, default='./block_header_df.pkl', help="path to write the extracted data to")
-    parser.add_argument("--block_extension", type=str, default='.dat', help="extension of block files; must be unique")
-    parser.add_argument("--statement_extension", type=str, default='.stmt', help="extension of block files; must be unique")
-    parser.add_argument("--db_offset_bytes", type=int, default=DB_OFFSET_BYTES, help="padding bytes at start of storage files")
-    parser.add_argument("--save_tx_hashes", action='store_true', help="flag to keep full tx hashes")
-    parser.add_argument("--save_subcache_merkle_roots", action='store_true', help="flag to keep subcache merkle roots")
-    parser.add_argument("--quiet", action='store_true', help="do not show progress bars")
-    
-    args = parser.parse_args()
-    return args
-
-
-def load_stm_data(stm_save_path='./stmt_data.pkl'):
-    statements = {
-        'transaction_statements':{},
-        'address_resolution_statements': {},
-        'mosaic_resolution_statements': {}
-    }
-    with open(stm_save_path, 'rb') as f:
-        unpacker = msgpack.Unpacker(f, raw=False)
-        for height, stm in unpacker:
-            for k, v in stm.items():
-                statements[k][height] = v
-    return statements
-
-
 def main(args):
-    args = parse_args(sys.argv)
-    if args.quiet:
-        globals()['tqdm'] = functools.partial(tqdm, disable=True)
-
+    
     block_paths = glob.glob(os.path.join(args.block_dir,'**','*'+args.block_extension),recursive=True)
     block_format_pattern = re.compile('[0-9]{5}'+args.block_extension)
 
@@ -1042,7 +1007,7 @@ def main(args):
             for stmt in stmts['transaction_statements']:
                 for rx in stmt['receipts']:
                     state_map_rx(rx,height,state_map)
-            pack_data = msgpack.packb((s_height, stmts,), use_bin_type=True)
+            pack_data = msgpack.packb((s_height, stmts,))
             f.write(pack_data)
 
     assert len([*statements_]) == 0
@@ -1075,5 +1040,27 @@ def main(args):
     print("exiting . . .")
 
 
+def parse_args(argv):
+    parser = argparse.ArgumentParser(argv)
+    parser.add_argument("--block_dir", type=str, default='./data', help="Location of block store")
+    parser.add_argument("--block_save_path", type=str, default='./block_data.pkl', help="path to write the extracted block data to")
+    parser.add_argument("--statement_save_path", type=str, default='./stmt_data.pkl', help="path to write the extracted statement data to")
+    parser.add_argument("--state_save_path", type=str, default='./state_map.pkl', help="path to write the extracted statement data to")
+    parser.add_argument("--header_save_path", type=str, default='./block_header_df.pkl', help="path to write the extracted data to")
+    parser.add_argument("--block_extension", type=str, default='.dat', help="extension of block files; must be unique")
+    parser.add_argument("--statement_extension", type=str, default='.stmt', help="extension of block files; must be unique")
+    parser.add_argument("--db_offset_bytes", type=int, default=DB_OFFSET_BYTES, help="padding bytes at start of storage files")
+    parser.add_argument("--save_tx_hashes", action='store_true', help="flag to keep full tx hashes")
+    parser.add_argument("--save_subcache_merkle_roots", action='store_true', help="flag to keep subcache merkle roots")
+    parser.add_argument("--quiet", action='store_true', help="do not show progress bars")
+    
+    args = parser.parse_args()
+
+    return args
+
+
 if __name__ == "__main__":
-    main(sys.argv)
+    args = parse_args(sys.argv)
+    if args.quiet:
+        tqdm = functools.partial(tqdm, disable=True)
+    main(args)
