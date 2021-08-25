@@ -128,6 +128,7 @@ MOSAIC_RESOLUTION_FORMAT = {
 
 MOSAIC_RESOLUTION_LEN = 16
 
+STATEMENT_SAVE_PATH = './stmt_data.msgpack'
 
 TX_NAME_MAP = {
     b'414c': 'Account Key Link',
@@ -1089,7 +1090,6 @@ class XYMStateMap():
             for sub_rx in rx['receipts']:
                 self.insert_rx(sub_rx,height)
 
-
     def to_dict(self):
         """Convert internal state map to serializable dictionary"""
         sm_dict = dict(self.state_map)
@@ -1100,8 +1100,24 @@ class XYMStateMap():
         return sm_dict
 
 
+def load_stm_data(stm_save_path=STATEMENT_SAVE_PATH):
+    statements = {
+        'transaction_statements':{},
+        'address_resolution_statements': {},
+        'mosaic_resolution_statements': {}
+    }
+    with open(stm_save_path, 'rb') as f:
+        unpacker = msgpack.Unpacker(f, raw=False)
+        for height, stm in unpacker:
+            for k, v in stm.items():
+                statements[k][height] = v
+    return statements
+
+
 def main(args):
-    
+    if args.quiet:
+        globals()['tqdm'] = functools.partial(tqdm, disable=True)
+
     block_format_pattern = re.compile('[0-9]{5}'+args.block_extension)
     block_paths = glob.glob(os.path.join(args.block_dir,'**','*'+args.block_extension),recursive=True)
     block_paths = tqdm(sorted(list(filter(lambda x: block_format_pattern.match(os.path.basename(x)),block_paths))))
@@ -1182,7 +1198,7 @@ def main(args):
                 for rx in stmt['receipts']:
                     state_map.insert_rx(rx,height)
 
-            f.write(msgpack.packb((s_height, stmts,))) 
+            f.write(msgpack.packb((s_height, stmts,), use_bin_type=True)) 
 
     assert len([*statements_]) == 0
 
@@ -1198,7 +1214,7 @@ def main(args):
     print(f"header data written to {args.header_save_path}")
 
     with open(args.state_save_path, 'wb') as f:
-        f.write(msgpack.packb(state_map.to_dict()))
+        f.write(msgpack.packb(state_map.to_dict(), use_bin_type=True))
 
     print(f"state data written to {args.state_save_path}")
 
@@ -1206,10 +1222,10 @@ def main(args):
 
 
 def parse_args(argv):
-    parser = argparse.ArgumentParser(argv)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--block_dir", type=str, default='./data', help="Location of block store")
     parser.add_argument("--block_save_path", type=str, default='./block_data.msgpack', help="path to write the extracted block data to")
-    parser.add_argument("--statement_save_path", type=str, default='./stmt_data.msgpack', help="path to write the extracted statement data to")
+    parser.add_argument("--statement_save_path", type=str, default=STATEMENT_SAVE_PATH, help="path to write the extracted statement data to")
     parser.add_argument("--state_save_path", type=str, default='./state_map.msgpack', help="path to write the extracted statement data to")
     parser.add_argument("--header_save_path", type=str, default='./block_header_df.pkl', help="path to write the extracted data to")
     parser.add_argument("--block_extension", type=str, default='.dat', help="extension of block files; must be unique")
@@ -1219,13 +1235,11 @@ def parse_args(argv):
     parser.add_argument("--save_subcache_merkle_roots", action='store_true', help="flag to keep subcache merkle roots")
     parser.add_argument("--quiet", action='store_true', help="do not show progress bars")
     
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     return args
 
 
 if __name__ == "__main__":
     args = parse_args(sys.argv)
-    if args.quiet:
-        tqdm = functools.partial(tqdm, disable=True)
     main(args)
