@@ -1100,13 +1100,13 @@ class XYMStateMap():
         return sm_dict
 
 
-def load_stm_data(stm_save_path=STATEMENT_SAVE_PATH):
+def load_stm_data(statement_save_path=STATEMENT_SAVE_PATH):
     statements = {
         'transaction_statements':{},
         'address_resolution_statements': {},
         'mosaic_resolution_statements': {}
     }
-    with open(stm_save_path, 'rb') as f:
+    with open(statement_save_path, 'rb') as f:
         unpacker = msgpack.Unpacker(f, raw=False)
         for height, stm in unpacker:
             for k, v in stm.items():
@@ -1241,5 +1241,5 @@ def parse_args(argv):
 
 
 if __name__ == "__main__":
-    args = parse_args(sys.argv)
+    args = parse_args(sys.argv[1:])
     main(args)
