@@ -1199,12 +1199,12 @@ def main(args):
     statements_ = deserialize_statements(get_statement_paths(block_dir=args.block_dir, statement_extension=args.statement_extension))
 
     with open(args.statement_save_path, 'wb') as f_statements:
-        for s_height, stmts, s_path in statements_:
+        for height, stmts, s_path in statements_:
             for stmt in stmts['transaction_statements']:
                 for rx in stmt['receipts']:
                     state_map.insert_rx(rx,height)
 
-        f_statements.write(msgpack.packb((s_height, stmts,), use_bin_type=True)) 
+        f_statements.write(msgpack.packb((height, stmts,), use_bin_type=True)) 
 
     print("statement data extraction complete!\n")
     print(f"statement data written to {args.statement_save_path}")
