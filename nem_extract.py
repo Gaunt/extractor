@@ -981,6 +981,59 @@ def deserialize_statements(statement_paths, db_offset_bytes=DB_OFFSET_BYTES):
             yield stmt_height, statements, path
 
 
+def block_paths():
+    pass
+
+            
+def deserialize_blocks(block_paths, save_subcache_merkle_roots=True):
+    for path in block_paths:
+        
+        block_paths.set_description(f"processing block file: {path}")
+
+        with open(path,mode='rb') as f:
+            blk_data = f.read()
+        
+        i = args.db_offset_bytes
+
+        while i < len(blk_data):
+
+            # get fixed length data
+            header = deserialize_header(blk_data[i:i+HEADER_LEN])
+            footer = deserialize_footer(blk_data[i+HEADER_LEN:i+header['size']],header)
+            i += header['size']
+            block_hash, generation_hash = struct.unpack('<32s32s',blk_data[i:i+64])
+            i += 64
+
+            # get transaction hashes
+            num_tx_hashes = struct.unpack('I',blk_data[i:i+4])[0]
+            i += 4
+            tx_hashes = None
+            if args.save_tx_hashes:
+                tx_hashes = []
+                for _ in range(num_tx_hashes):
+                    tx_hashes.append(fmt_unpack(blk_data[i:i+TX_HASH_LEN],TX_HASH_FORMAT))
+                    i += TX_HASH_LEN
+            else:    
+                i += num_tx_hashes * TX_HASH_LEN
+
+            # get sub cache merkle roots
+            root_hash_len = struct.unpack('I',blk_data[i:i+4])[0] * 32
+            i += 4
+            merkle_roots = None
+            if save_subcache_merkle_roots:
+                merkle_roots = fmt_unpack(blk_data[i:i+root_hash_len],SUBCACHE_MERKLE_ROOT_FORMAT) 
+            i += root_hash_len
+
+            yield {
+                'header':header,
+                'footer':footer,
+                'block_hash':block_hash,
+                'tx_hashes':tx_hashes,
+                'subcache_merkle_roots':merkle_roots
+            }
+
+
+
 def get_block_stats(block):
     """Extract summary data from a block and flatten for tabular manipulation"""
     data = block['header'].copy()
@@ -1114,102 +1167,50 @@ def load_stm_data(statement_save_path=STATEMENT_SAVE_PATH):
     return statements
 
 
+def get_block_paths(block_dir, block_extension):
+    block_format_pattern = re.compile('[0-9]{5}'+args.block_extension)
+    block_paths = glob.glob(os.path.join(args.block_dir,'**','*'+args.block_extension),recursive=True)
+    block_paths = tqdm(sorted(list(filter(lambda x: block_format_pattern.match(os.path.basename(x)),block_paths))))
+    return block_paths
+
+
 def main(args):
     if args.quiet:
         globals()['tqdm'] = functools.partial(tqdm, disable=True)
 
-    block_format_pattern = re.compile('[0-9]{5}'+args.block_extension)
-    block_paths = glob.glob(os.path.join(args.block_dir,'**','*'+args.block_extension),recursive=True)
-    block_paths = tqdm(sorted(list(filter(lambda x: block_format_pattern.match(os.path.basename(x)),block_paths))))
-
-    blocks = []
-    for path in block_paths:
-        
-        block_paths.set_description(f"processing block file: {path}")
-
-        with open(path,mode='rb') as f:
-            blk_data = f.read()
-        
-        i = args.db_offset_bytes
-
-        while i < len(blk_data):
-
-            # get fixed length data
-            header = deserialize_header(blk_data[i:i+HEADER_LEN])
-            footer = deserialize_footer(blk_data[i+HEADER_LEN:i+header['size']],header)
-            i += header['size']
-            block_hash, generation_hash = struct.unpack('<32s32s',blk_data[i:i+64])
-            i += 64
-
-            # get transaction hashes
-            num_tx_hashes = struct.unpack('I',blk_data[i:i+4])[0]
-            i += 4
-            tx_hashes = None
-            if args.save_tx_hashes:
-                tx_hashes = []
-                for _ in range(num_tx_hashes):
-                    tx_hashes.append(fmt_unpack(blk_data[i:i+TX_HASH_LEN],TX_HASH_FORMAT))
-                    i += TX_HASH_LEN
-            else:    
-                i += num_tx_hashes * TX_HASH_LEN
-
-            # get sub cache merkle roots
-            root_hash_len = struct.unpack('I',blk_data[i:i+4])[0] * 32
-            i += 4
-            merkle_roots = None
-            if args.save_subcache_merkle_roots:
-                merkle_roots = fmt_unpack(blk_data[i:i+root_hash_len],SUBCACHE_MERKLE_ROOT_FORMAT) 
-            i += root_hash_len
-
-            blocks.append({
-                'header':header,
-                'footer':footer,
-                'block_hash':block_hash,
-                'tx_hashes':tx_hashes,
-                'subcache_merkle_roots':merkle_roots
-            })
-
-    print("block data extraction complete!\n")
+    blocks = deserialize_blocks(get_block_paths(args.block_dir, args.block_extension), args.save_subcache_merkle_roots)
     
-    with open(args.block_save_path, 'wb') as f:
-        f.write(msgpack.packb(blocks))
-
-    print(f"block data written to {args.block_save_path}")
-
-    statements_ = deserialize_statements(get_statement_paths(block_dir=args.block_dir, statement_extension=args.statement_extension))
-    blocks = sorted(blocks, key=lambda b:b['header']['height'])
-    s_height, stmts, s_path = next(statements_)
-
     state_map = XYMStateMap()
 
-    with open(args.statement_save_path, 'wb') as f:
+    with open(args.block_save_path, 'wb') as f_blocks:
         for block in blocks:
             height = block['header']['height']
             for tx in block['footer']['transactions']:
                 state_map.insert_tx(tx,height,block['header']['fee_multiplier'])
+            f_blocks.write(msgpack.packb(block))
 
-            if s_height > height:
-                continue
+    print("block data extraction complete!\n")
+    print(f"block data written to {args.block_save_path}")
 
-            while s_height < height:
-                s_height, stmts, s_path = next(statements_)
+    statements_ = deserialize_statements(get_statement_paths(block_dir=args.block_dir, statement_extension=args.statement_extension))
 
+    with open(args.statement_save_path, 'wb') as f_statements:
+        for s_height, stmts, s_path in statements_:
             for stmt in stmts['transaction_statements']:
                 for rx in stmt['receipts']:
                     state_map.insert_rx(rx,height)
 
-            f.write(msgpack.packb((s_height, stmts,), use_bin_type=True)) 
-
-    assert len([*statements_]) == 0
+        f_statements.write(msgpack.packb((s_height, stmts,), use_bin_type=True)) 
 
     print("statement data extraction complete!\n")
     print(f"statement data written to {args.statement_save_path}")
     
     # TODO: convert all fields to efficient string representations so header df can be stored as csv instead of pickle
-    header_df = pd.DataFrame.from_records([get_block_stats(x) for x in blocks])
-    header_df['dateTime'] = pd.to_datetime(header_df['timestamp'],origin=pd.to_datetime('2021-03-16 00:06:25'),unit='ms')
-    header_df = header_df.set_index('dateTime').sort_index(axis=0)
-    header_df.to_pickle(args.header_save_path)
+    if False:
+        header_df = pd.DataFrame.from_records([get_block_stats(x) for x in blocks])
+        header_df['dateTime'] = pd.to_datetime(header_df['timestamp'],origin=pd.to_datetime('2021-03-16 00:06:25'),unit='ms')
+        header_df = header_df.set_index('dateTime').sort_index(axis=0)
+        header_df.to_pickle(args.header_save_path)
 
     print(f"header data written to {args.header_save_path}")
 
