@@ -1145,11 +1145,15 @@ class XYMStateMap():
 
     def to_dict(self):
         """Convert internal state map to serializable dictionary"""
-        sm_dict = dict(self.state_map)
+
+        def dict_s(d):
+            return dict(sorted(d.items()))
+
+        sm_dict = dict_s(self.state_map)
         for k, v in sm_dict.items():
-            sm_dict[k] = dict(v)
+            sm_dict[k] = dict_s(v)
             for kk, vv in v.items():
-                sm_dict[k][kk] = dict(vv)
+                sm_dict[k][kk] = dict_s(vv)
         return sm_dict
 
 
