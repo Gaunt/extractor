@@ -129,6 +129,7 @@ MOSAIC_RESOLUTION_FORMAT = {
 MOSAIC_RESOLUTION_LEN = 16
 
 STATEMENT_SAVE_PATH = './stmt_data.msgpack'
+STATE_SAVE_PATH = './state_map.msgpack'
 
 TX_NAME_MAP = {
     b'414c': 'Account Key Link',
@@ -1152,6 +1153,17 @@ class XYMStateMap():
                 sm_dict[k][kk] = dict_s(vv)
         return sm_dict
 
+    @staticmethod
+    def from_file(filename=STATE_SAVE_PATH):
+        """
+        Factory method for instanciating XYMstatemap from msgpack file
+        """
+        xym_state_map = XYMStateMap()
+        with open(filename, 'rb') as f:
+            unpacker = msgpack.Unpacker(f, raw=False)
+            xym_state_map.state_map = next(unpacker) # file should contain only one object
+            return xym_state_map
+
 
 def load_stm_data(statement_save_path=STATEMENT_SAVE_PATH):
     statements = {
@@ -1228,7 +1240,7 @@ def parse_args(argv):
     parser.add_argument("--block_dir", type=str, default='./data', help="Location of block store")
     parser.add_argument("--block_save_path", type=str, default='./block_data.msgpack', help="path to write the extracted block data to")
     parser.add_argument("--statement_save_path", type=str, default=STATEMENT_SAVE_PATH, help="path to write the extracted statement data to")
-    parser.add_argument("--state_save_path", type=str, default='./state_map.msgpack', help="path to write the extracted statement data to")
+    parser.add_argument("--state_save_path", type=str, default=STATE_SAVE_PATH, help="path to write the extracted statement data to")
     parser.add_argument("--header_save_path", type=str, default='./block_header_df.pkl', help="path to write the extracted data to")
     parser.add_argument("--block_extension", type=str, default='.dat', help="extension of block files; must be unique")
     parser.add_argument("--statement_extension", type=str, default='.stmt', help="extension of block files; must be unique")
