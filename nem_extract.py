@@ -1158,13 +1158,12 @@ class XYMStateMap():
     @staticmethod
     def from_file(filename=STATE_SAVE_PATH):
         """
-        Factory method for instanciating XYMstatemap from msgpack file
+        unpacks state_map dicitionary
         """
         xym_state_map = XYMStateMap()
         with open(filename, 'rb') as f:
             unpacker = msgpack.Unpacker(f, raw=False)
-            xym_state_map.state_map = next(unpacker) # file should contain only one object
-            return xym_state_map
+            return next(unpacker)
 
 
 def load_stm_data(statement_save_path=STATEMENT_SAVE_PATH):
