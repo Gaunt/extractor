@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - dev
       - feature/**
   pull_request:
     branches: [ main ]
