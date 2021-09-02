@@ -1,4 +1,19 @@
+import pytest
+import subprocess
+import pathlib
+import shlex
 import nem_extract
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fetch_text_data_dir():
+    p = pathlib.Path("./symbol_test_data")
+    if not p.exists():
+        subprocess.run(
+            shlex.split(
+                """git clone https://github.com/Gaunt/symbol_test_data"""
+            )
+        )
 
 
 def test_stm_file_deserialize(tmp_path):
@@ -6,7 +21,7 @@ def test_stm_file_deserialize(tmp_path):
     nem_extract.main(
         nem_extract.parse_args(
             [
-                "--block_dir=data_test",
+                "--block_dir=./symbol_test_data/data_main",
                 f"--statement_save_path={str(statement_save_path)}",
                 "--quiet",
             ]

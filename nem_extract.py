@@ -1213,7 +1213,7 @@ def main(args):
                 for rx in stmt['receipts']:
                     state_map.insert_rx(rx,height)
 
-        f_statements.write(msgpack.packb((height, stmts,), use_bin_type=True)) 
+            f_statements.write(msgpack.packb((height, stmts,), use_bin_type=True)) 
 
     print("statement data extraction complete!\n")
     print(f"statement data written to {args.statement_save_path}")
