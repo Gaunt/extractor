@@ -20,3 +20,9 @@ def test_stm_file_deserialize(tmp_path):
         "address_resolution_statements",
         "mosaic_resolution_statements",
     ]
+
+
+def test_deserialize_blocks():
+    block_paths = nem_extract.get_block_paths(block_dir="data_test")
+    for block in nem_extract.deserialize_blocks(block_paths):
+        assert len(block['tx_hashes']) == len(block['footer']['transactions'])

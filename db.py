@@ -5,6 +5,7 @@ from typing import NamedTuple, Optional, Iterable
 import pickle
 import contextlib
 import os
+from nem_extract import StateChange, StateChangeType
 
 
 DB_FILE = "symbol.db"
@@ -21,35 +22,27 @@ def get_conn(db_file=DB_FILE):
     return _conn
 
 
-class StateChangeType(Enum):
-    TX_OUT = "tx_out"
-    TX_IN = "tx_in"
-    RX_DEBIT = "rx_debit"
-    RX_CREDIT = "rx_credit"
-
-
-class AccountStateChange(NamedTuple):
-    address: str
-    xym_change: int
-    height: int
-    type_: str
-    fee: Optional[int] = None
-    fee_multiplier: Optional[int] = None
-    sender_address: str = None
-    recipient_address: str = None
-    tx_type: str = None
-    explorer_link: Optional[str] = None
-
-
-def db_init():
-    conn = get_conn()
+def db_init(db_file=DB_FILE):
+    conn = get_conn(db_file)
     cursor = conn.cursor()
     try:
         cursor.execute(
             dedent(
-                """CREATE TABLE account_state_changes
-        (address text, xym_change int, height int, change_type int, fee int, fee_multiplier int,
-        sender_address text, recipient_address text, tx_type text, explorer_link text)"""
+                """
+                CREATE TABLE account_state_changes(
+                 address text,
+                 height int,
+                 type_ text,
+                 amount int,
+                 payload_type int,
+                 fee int,
+                 fee_multiplier int,
+                 sender_address text,
+                 recipient_address text,
+                 entity_hash text,
+                 merkle_component_hash text,
+                 mosaic text)
+                """
             )
         )
     except sqlite3.OperationalError:
@@ -58,17 +51,14 @@ def db_init():
 
 
 def db_clean(db_file=DB_FILE):
-    try:
-        os.remove(db_file)
-    except FileNotFoundError:
-        pass
+    os.remove(db_file)
 
 
 @contextlib.contextmanager
 def batch_saver():
     batch = []
 
-    def saver(changes: Iterable[AccountStateChange]):
+    def saver(changes: Iterable[StateChange]):
         nonlocal batch
         batch.extend(changes)
         if len(batch) > BATCH_SIZE:
@@ -81,11 +71,12 @@ def batch_saver():
         save_changes(batch)
 
 
-def save_changes(changes: Iterable[AccountStateChange]):
+def save_changes(changes: Iterable[StateChange]):
     conn = get_conn()
     cursor = conn.cursor()
     cursor.executemany(
-        """INSERT INTO account_state_changes VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        """INSERT INTO account_state_changes
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         changes,
     )
     conn.commit()

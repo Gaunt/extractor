@@ -18,6 +18,9 @@ from collections import defaultdict
 from tqdm import tqdm
 import msgpack
 import sys
+from enum import Enum
+from typing import NamedTuple, Optional, Iterable
+import itertools as it
 
 
 # describe the fixed structure of block entity bytes for unpacking
@@ -130,9 +133,6 @@ MOSAIC_RESOLUTION_FORMAT = {
 
 MOSAIC_RESOLUTION_LEN = 16
 
-STATEMENT_SAVE_PATH = './stmt_data.msgpack'
-STATE_SAVE_PATH = './state_map.msgpack'
-
 TX_NAME_MAP = {
     b'414c': 'Account Key Link',
     b'424c': 'Node Key Link',
@@ -158,6 +158,35 @@ TX_NAME_MAP = {
     b'4151': 'Mosaic Global Restriction',
     b'4251': 'Mosaic Address Restriction',
     b'4154': 'Transfer'}
+
+
+# some default values
+
+STATEMENT_SAVE_PATH = './stmt_data.msgpack'
+STATE_SAVE_PATH = './state_map.msgpack'
+BLOCK_EXTENSION = '.dat'
+
+
+class StateChangeType(Enum):
+    TX_OUT = "tx_out"
+    TX_IN = "tx_in"
+    RX_DEBIT = "rx_debit"
+    RX_CREDIT = "rx_credit"
+
+
+class StateChange(NamedTuple):
+    address: str
+    height: int
+    type_: str
+    amount: int = 0
+    payload_type: int = 0
+    fee: Optional[int] = None
+    fee_multiplier: Optional[int] = None
+    sender_address: Optional[str] = None
+    recipient_address: Optional[str] = None
+    entity_hash: Optional[str] = None
+    merkle_component_hash: Optional[str] = None
+    mosaic: str = 'XYM'
 
 
 def fmt_unpack(buffer,struct_format):
@@ -1022,7 +1051,6 @@ def deserialize_blocks(block_paths, save_subcache_merkle_roots=True, db_offset_b
             if save_subcache_merkle_roots:
                 merkle_roots = fmt_unpack(blk_data[i:i+root_hash_len],SUBCACHE_MERKLE_ROOT_FORMAT) 
             i += root_hash_len
-
             yield {
                 'header':header,
                 'footer':footer,
@@ -1030,7 +1058,6 @@ def deserialize_blocks(block_paths, save_subcache_merkle_roots=True, db_offset_b
                 'tx_hashes':tx_hashes,
                 'subcache_merkle_roots':merkle_roots
             }
-
 
 
 def get_block_stats(block):
@@ -1064,8 +1091,10 @@ class XYMStateMap():
         })
         self.tracked_mosaics = ['0x6bed913fa20223f8','0xe74b99ba41f4afee'] # only care about XYM for now, hardcoded alias
 
+    def insert_tx(self,tx,height,fee_multiplier, tx_hash=None):
+        [*self.decompose_tx(tx,height,fee_multiplier, tx_hash=tx_hash)]
 
-    def insert_tx(self,tx,height,fee_multiplier):
+    def decompose_tx(self,tx,height,fee_multiplier, tx_hash=None, parent_hash=None):
         """Insert a transaction into the state map and record resulting changes
         
         Parameters
@@ -1076,11 +1105,10 @@ class XYMStateMap():
             Height of transaction
         fee_multiplier: float
             Fee multiplier for transaction's containing block
-
         """
-
         # TODO: handle flows for *all* mosaics, not just XYM
         address = public_key_to_address(unhexlify(tx['signer_public_key']))
+        sender_amount = 0
         
         if tx['type'] == b'4154': # transfer tx
             if len(tx['payload']['message']) and tx['payload']['message'][0] == 0xfe:
@@ -1090,7 +1118,17 @@ class XYMStateMap():
                     if hex(mosaic['mosaic_id']) in self.tracked_mosaics:
                         self.state_map[address]['xym_balance'][height] -= mosaic['amount']
                         self.state_map[tx['payload']['recipient_address']]['xym_balance'][height] += mosaic['amount']
-        
+                        sender_amount -= mosaic['amount']
+                        recipient_address = tx['payload']['recipient_address']
+                        yield StateChange(address=recipient_address,
+                                          type_=StateChangeType.TX_IN.value,
+                                          recipient_address=recipient_address,
+                                          height=height,
+                                          payload_type=tx['type'],
+                                          entity_hash=tx_hash,
+                                          merkle_component_hash=tx_hash,
+                                          amount=mosaic['amount'],)
+
         elif tx['type'] in [b'4243',b'424c',b'414c']: # key link tx          
             if tx['type'] == b'4243': 
                 link_key = 'vrf_key_link'
@@ -1105,13 +1143,24 @@ class XYMStateMap():
         
         elif tx['type'] in [b'4141',b'4241']: # aggregate tx
             for sub_tx in tx['payload']['embedded_transactions']:
-                self.insert_tx(sub_tx,height,None)
+                yield from self.decompose_tx(sub_tx,height,None, tx_hash=tx_hash)
         
         if fee_multiplier is not None: # handle fees
+            fee = min(tx["max_fee"], tx["size"] * fee_multiplier)
             self.state_map[address]['xym_balance'][height] -= min(tx['max_fee'],tx['size']*fee_multiplier)
-
+            yield StateChange(address=address,
+                              amount=sender_amount - fee,
+                              fee=fee,
+                              height=height,
+                              payload_type=tx['type'],
+                              entity_hash=tx_hash,
+                              merkle_component_hash=tx_hash,
+                              type_=StateChangeType.TX_OUT.value)
 
     def insert_rx(self,rx,height):
+        [*self.decompose_rx(rx,height)]
+
+    def decompose_rx(self, rx,height):
         """Insert a receipt into the state map and record resulting changes
         
         Parameters
@@ -1122,25 +1171,56 @@ class XYMStateMap():
             Height of receipt
 
         """
-    
+
+        balance_change = 0
+        
         # rental fee receipts
         if rx['type'] in [0x124D, 0x134E]: 
             if hex(rx['payload']['mosaic_id']) in ['0x6bed913fa20223f8','0xe74b99ba41f4afee']:
                 self.state_map[rx['payload']['sender_address']]['xym_balance'][height] -= rx['payload']['amount']
+                yield StateChange(
+                    address=rx["payload"]["sender_address"],
+                    amount=-rx["payload"]["amount"],
+                    height=height,
+                    payload_type=rx['type'],
+                    type_=StateChangeType.RX_DEBIT.value,
+                )
                 self.state_map[rx['payload']['recipient_address']]['xym_balance'][height] += rx['payload']['amount']
+                yield StateChange(
+                    address=rx["payload"]["recipient_address"],
+                    amount=rx["payload"]["amount"],
+                    height=height,
+                    payload_type=rx['type'],
+                    type_=StateChangeType.RX_CREDIT.value,
+                )
+
                 
         # balance change receipts (credit)
         elif rx['type'] in [0x2143,0x2248,0x2348,0x2252,0x2352]:
             self.state_map[rx['payload']['target_address']]['xym_balance'][height] += rx['payload']['amount']
-            
+            yield StateChange(
+                address=rx["payload"]["target_address"],
+                amount=rx["payload"]["amount"],
+                height=height,
+                payload_type=rx['type'],
+                type_=StateChangeType.RX_CREDIT.value,
+            )
+
         # balance change receipts (debit)
         elif rx['type'] == [0x3148,0x3152]:
             self.state_map[rx['payload']['target_address']]['xym_balance'][height] -= rx['payload']['amount']
-        
+            yield StateChange(
+                address=rx["payload"]["target_address"],
+                amount=-rx["payload"]["amount"],
+                height=height,
+                payload_type=rx['type'],
+                type_=StateChangeType.RX_DEBIT.value,
+            )
+
         # aggregate receipts
         if rx['type'] == 0xE143:
             for sub_rx in rx['receipts']:
-                self.insert_rx(sub_rx,height)
+                yield from self.decompose_rx(sub_rx,height)
 
     def to_dict(self):
         """Convert internal state map to serializable dictionary"""
@@ -1180,7 +1260,7 @@ def load_stm_data(statement_save_path=STATEMENT_SAVE_PATH):
     return statements
 
 
-def get_block_paths(block_dir, block_extension):
+def get_block_paths(block_dir, block_extension=BLOCK_EXTENSION):
     block_format_pattern = re.compile('[0-9]{5}'+block_extension)
     block_paths = glob.glob(os.path.join(block_dir,'**','*'+block_extension),recursive=True)
     block_paths = tqdm(sorted(list(filter(lambda x: block_format_pattern.match(os.path.basename(x)),block_paths))))
@@ -1191,15 +1271,18 @@ def main(args):
     if args.quiet:
         globals()['tqdm'] = functools.partial(tqdm, disable=True)
 
-    blocks = deserialize_blocks(get_block_paths(args.block_dir, args.block_extension), args.save_subcache_merkle_roots)
+    block_paths = get_block_paths(args.block_dir, args.block_extension)
+    blocks = deserialize_blocks(block_paths, args.save_subcache_merkle_roots)
     block_stats = []
     state_map = XYMStateMap()
 
     with open(args.block_save_path, 'wb') as f_blocks:
         for block in blocks:
             height = block['header']['height']
-            for tx in block['footer']['transactions']:
-                state_map.insert_tx(tx,height,block['header']['fee_multiplier'])
+            transactions = block['footer']['transactions']
+            tx_hashes = block['tx_hashes'] or it.repeat(None)
+            for tx, tx_hash in zip(transactions, tx_hashes):
+                state_map.insert_tx(tx, height,block['header']['fee_multiplier'], tx_hash=tx_hash)
             f_blocks.write(msgpack.packb(block))
             block_stats.append(get_block_stats(block))
     
@@ -1243,7 +1326,7 @@ def parse_args(argv):
     parser.add_argument("--statement_save_path", type=str, default=STATEMENT_SAVE_PATH, help="path to write the extracted statement data to")
     parser.add_argument("--state_save_path", type=str, default=STATE_SAVE_PATH, help="path to write the extracted statement data to")
     parser.add_argument("--header_save_path", type=str, default='./block_header_df.pkl', help="path to write the extracted data to")
-    parser.add_argument("--block_extension", type=str, default='.dat', help="extension of block files; must be unique")
+    parser.add_argument("--block_extension", type=str, default=BLOCK_EXTENSION, help="extension of block files; must be unique")
     parser.add_argument("--statement_extension", type=str, default='.stmt', help="extension of block files; must be unique")
     parser.add_argument("--db_offset_bytes", type=int, default=DB_OFFSET_BYTES, help="padding bytes at start of storage files")
     parser.add_argument("--save_tx_hashes", action='store_true', help="flag to keep full tx hashes")
