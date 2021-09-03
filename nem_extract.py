@@ -946,7 +946,9 @@ def get_block_stats(block):
 
 
 def main(args):
-    
+    if args.quiet:
+        globals()['tqdm'] = functools.partial(tqdm, disable=True)
+
     block_format_pattern = re.compile('[0-9]{5}'+args.block_extension)
     block_paths = glob.glob(os.path.join(args.block_dir,'**','*'+args.block_extension),recursive=True)
     block_paths = tqdm(sorted(list(filter(lambda x: block_format_pattern.match(os.path.basename(x)),block_paths))))
@@ -1050,7 +1052,7 @@ def main(args):
 
 
 def parse_args(argv):
-    parser = argparse.ArgumentParser(argv)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--block_dir", type=str, default='./data', help="Location of block store")
     parser.add_argument("--block_save_path", type=str, default='./block_data.msgpack', help="path to write the extracted block data to")
     parser.add_argument("--statement_save_path", type=str, default='./stmt_data.msgpack', help="path to write the extracted statement data to")
@@ -1063,13 +1065,13 @@ def parse_args(argv):
     parser.add_argument("--save_subcache_merkle_roots", action='store_true', help="flag to keep subcache merkle roots")
     parser.add_argument("--quiet", action='store_true', help="do not show progress bars")
     
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     return args
 
 
 if __name__ == "__main__":
-    args = parse_args(sys.argv)
+    args = parse_args(sys.argv[1:])
     if args.quiet:
         tqdm = functools.partial(tqdm, disable=True)
     main(args)
