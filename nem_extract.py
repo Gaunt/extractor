@@ -1067,6 +1067,4 @@ def parse_args(argv):
 
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
-    if args.quiet:
-        tqdm = functools.partial(tqdm, disable=True)
     main(args)
