@@ -45,8 +45,8 @@ def main(args):
     if args.quiet:
         nem_extract.tqdm = functools.partial(tqdm, disable=True)
 
-    sql.db_clean()
-    sql.db_init()
+    sql.db_clean(args.sqlite_db_file)
+    sql.db_init(args.sqlite_db_file)
 
     block_paths = nem_extract.get_block_paths(
         args.block_dir, args.block_extension
